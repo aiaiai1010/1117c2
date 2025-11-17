@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>首角度ロガー（傾斜センサのみ iOS 対応）</title>
+  <title>首角度ロガー（姿勢アプリ用ログ形式）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body {
@@ -51,7 +51,7 @@
   </style>
 </head>
 <body>
-  <h1>首角度ロガー（傾斜センサのみ）</h1>
+  <h1>首角度ロガー（姿勢推定アプリ用ログ）</h1>
 
   <div class="box">
     <div class="label">1. 「センサ開始」を押してから、iPhone を少し傾けてください</div>
@@ -83,21 +83,24 @@
     <button id="btnClear">ログ全削除</button>
     <div id="logStatus" class="status">ログ件数: 0</div>
     <div class="small">
-      1秒ごとに「時刻・経過時間・首角度」を記録します。<br>
-      姿勢推定アプリの CSV と同じように ts / iso を出力します。
+      1秒ごとに「ts, iso, elapsed_ms, head_pitch_deg, raw_beta_deg」を記録します。<br>
+      ts / iso は姿勢推定アプリと同じ形式です。
     </div>
   </div>
 
   <script>
-    let latestBeta = null;
-    let baseBeta = null;
+    // 最新の傾き
+    let latestBeta = null;   // DeviceOrientationEvent.beta
+    let baseBeta = null;     // 基準姿勢の beta
     let lastUpdateTime = null;
 
+    // ログ関連
     let logging = false;
-    let logStartTime = null;
+    let LOG_START_TS = null;     // 姿勢アプリの「ログ開始」と揃える用
     let logTimerId = null;
     let logData = [];
 
+    // UI
     const angleDisplay = document.getElementById('angleDisplay');
     const rawDisplay   = document.getElementById('rawDisplay');
     const tsDisplay    = document.getElementById('tsDisplay');
@@ -114,7 +117,7 @@
 
     let orientationStarted = false;
 
-    // 姿勢アプリと同じ形式の JST ISO 文字列（+09:00, ミリ秒付き）
+    // === 姿勢アプリと同じ JST ISO 文字列 ===
     function toJstIso(ts){
       const d = new Date(ts);
       const parts = Object.fromEntries(
@@ -129,6 +132,7 @@
       return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${ms}+09:00`;
     }
 
+    // センサ開始
     function startOrientationListener() {
       if (orientationStarted) return;
       orientationStarted = true;
@@ -155,10 +159,9 @@
     function updateAngleDisplay() {
       if (latestBeta == null) return;
 
-      let relativeDeg = baseBeta != null ? latestBeta - baseBeta : latestBeta;
-
+      const relativeDeg = baseBeta != null ? latestBeta - baseBeta : latestBeta;
       angleDisplay.textContent = `${relativeDeg.toFixed(1)} °`;
-      rawDisplay.textContent = `生の beta: ${latestBeta.toFixed(1)} °`;
+      rawDisplay.textContent   = `生の beta: ${latestBeta.toFixed(1)} °`;
 
       const t = lastUpdateTime;
       if (t) {
@@ -172,10 +175,12 @@
       }
     }
 
+    // ボタン：センサ開始
     btnPerm.addEventListener('click', () => {
       startOrientationListener();
     });
 
+    // ボタン：基準姿勢登録
     btnCalib.addEventListener('click', () => {
       if (latestBeta == null) {
         alert('センサ値が取得されていません。「センサ開始」を押して iPhone を傾けてください');
@@ -185,19 +190,21 @@
       calibStatus.textContent = `基準: beta=${baseBeta.toFixed(1)}° を0°として扱います`;
     });
 
+    // ボタン：ログ開始
     btnStart.addEventListener('click', () => {
       if (latestBeta == null) {
         alert('センサ値が取得されていません');
         return;
       }
       logging = true;
-      logStartTime = new Date();
+      LOG_START_TS = Date.now();          // ★ 姿勢アプリの「ログ開始」と同じタイミングで押す
       btnStart.disabled = true;
       btnStop.disabled = false;
-      logTimerId = setInterval(pushLog, 1000); // 1秒ごと
+      logTimerId = setInterval(pushLog, 1000); // ★ 姿勢アプリと同じ 1秒間隔
       logStatus.textContent = `ログ件数: ${logData.length}（記録中）`;
     });
 
+    // ボタン：ログ停止
     btnStop.addEventListener('click', () => {
       logging = false;
       btnStart.disabled = false;
@@ -207,32 +214,33 @@
       if (logData.length > 0) btnDownload.disabled = false;
     });
 
+    // ボタン：ログ全削除
     btnClear.addEventListener('click', () => {
       logData = [];
       logStatus.textContent = 'ログ件数: 0';
       btnDownload.disabled = true;
     });
 
+    // 1秒ごとのログ追加（姿勢アプリに合わせた形式）
     function pushLog() {
-      if (!logging || latestBeta == null) return;
+      if (!logging || latestBeta == null || LOG_START_TS == null) return;
 
-      const now = new Date();
-      const ts = now.getTime();
+      const ts = Date.now();
       const rel = baseBeta != null ? latestBeta - baseBeta : latestBeta;
 
       logData.push({
-        ts: ts,                     // エポックミリ秒
-        iso: toJstIso(ts),          // JST ISO（姿勢アプリとそろえる）
-        elapsed_ms: ts - logStartTime.getTime(),
-        head_pitch_deg: rel,
-        raw_beta_deg: latestBeta
+        ts: ts,                      // ← 姿勢アプリと同じ「エポックミリ秒」
+        iso: toJstIso(ts),           // ← 姿勢アプリと同じ JST ISO 文字列
+        elapsed_ms: ts - LOG_START_TS,
+        head_pitch_deg: rel,         // 基準からの首角度
+        raw_beta_deg: latestBeta     // センサそのままの beta
       });
 
       logStatus.textContent = `ログ件数: ${logData.length}（記録中）`;
     }
 
+    // CSV生成（ヘッダも姿勢アプリに寄せて ts, iso から始める）
     function makeCSV(data) {
-      // 姿勢アプリとそろえて ts / iso を含める
       const header = ['ts','iso','elapsed_ms','head_pitch_deg','raw_beta_deg'];
       const lines = [header.join(',')];
       data.forEach(row=>{
@@ -247,6 +255,7 @@
       return lines.join('\n');
     }
 
+    // ボタン：CSVダウンロード
     btnDownload.addEventListener('click', () => {
       if (logData.length === 0) {
         alert('ログがありません');
